@@ -1,0 +1,12 @@
+# Maps the files written by `otpsentinel simulate` for replay.
+columns: {timestamp: timestamp, phone: phone, type: type, ip: ip, label: label}
+otp:
+  "otp:login": login
+  "otp:login+resend": login+resend
+  "otp:register": register
+  "otp:register+resend": register+resend
+  "otp:reset_password": reset_password
+  "otp:change_phone": change_phone
+events:
+  "event:order": order
+feedback: {verification: false}

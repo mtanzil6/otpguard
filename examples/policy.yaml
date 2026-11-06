@@ -1,0 +1,47 @@
+# Example policy. Start in shadow mode, look at the alerts and the replay report,
+# then switch to enforce.
+version: example-2026-11
+mode: shadow
+secret: env:OTPSENTINEL_SECRET     # HMAC key for phone numbers; never commit the real one
+default_region: SA
+home_countries: [SA]
+prefix_digits: 3
+
+thresholds:
+  challenge: 0.5
+  block: 0.85
+
+feedback:
+  verification: true    # you call report_verified() when a code is entered
+  events: true          # you call report_event() for logins / orders
+
+# caps per number; real users retry more than you'd think, so look at your own
+# 99.9th percentile before tightening these
+purposes:
+  default:        {cap_1h: 6, cap_24h: 10}
+  register:       {cap_1h: 5, cap_24h: 8}
+  login:          {cap_1h: 6, cap_24h: 10}
+  reset_password: {cap_1h: 4, cap_24h: 6, weights: {D7: 0.8, D11: 0.7}}
+
+countries:
+  default: {risk: 0.2, price: 0.06, budget_per_hour: 6}
+  SA:      {risk: 0.0, price: 0.03, budget_per_hour: 80}
+  AE:      {risk: 0.1, price: 0.05, budget_per_hour: 12}
+  OM:      {risk: 0.2, price: 0.06, budget_per_hour: 6}
+
+# prefixes you never send to (1.0) or want to treat as risky (0..1)
+prefixes:
+  "+88216": 1.0
+
+detectors:
+  D5:  {window_min: 60, ratio_low: 2.0, ratio_high: 5.0, weight: 0.7}
+  D6:  {min_new: 8, p_value: 1.0e-4, weight: 0.7}
+  D7:  {last_n: 40, max_cv: 0.35, weight: 0.6}
+  # only purposes listed here are checked for a missing follow-up
+  D11: {events: {reset_password: [login_success, order]}}
+
+# planned sales and launches: volume detectors are damped while these run
+campaigns:
+  - {name: white-friday, start: 2026-11-20, end: 2026-11-29}
+
+fail_mode: open
