@@ -1,0 +1,98 @@
+{
+  "A1": {
+    "description": "pumping to one foreign country from a few IPs",
+    "injected": 777,
+    "recall": 0.9768,
+    "precision": 0.9706,
+    "f1": 0.9737,
+    "false_positive_rate": 0.0001,
+    "customer_collateral": 0.0001,
+    "top_reasons": {
+      "D5": 782
+    },
+    "otp_per_second": 5610
+  },
+  "A2": {
+    "description": "A1 with a fresh IP for every request",
+    "injected": 672,
+    "recall": 0.9732,
+    "precision": 0.966,
+    "f1": 0.9696,
+    "false_positive_rate": 0.0001,
+    "customer_collateral": 0.0001,
+    "top_reasons": {
+      "D5": 677
+    },
+    "otp_per_second": 5663
+  },
+  "A3": {
+    "description": "fresh numbers drawn sequentially from one prefix",
+    "injected": 590,
+    "recall": 0.9492,
+    "precision": 1.0,
+    "f1": 0.9739,
+    "false_positive_rate": 0.0,
+    "customer_collateral": 0.0,
+    "top_reasons": {
+      "D6": 287,
+      "D8": 273
+    },
+    "otp_per_second": 5775
+  },
+  "A4": {
+    "description": "low and slow: a few percent above normal for days",
+    "injected": 1042,
+    "recall": 0.072,
+    "precision": 0.6356,
+    "f1": 0.1293,
+    "false_positive_rate": 0.00019,
+    "customer_collateral": 0.00021,
+    "top_reasons": {
+      "D5": 118
+    },
+    "otp_per_second": 5584
+  },
+  "A5": {
+    "description": "one password reset to each of many existing customers, evenly paced",
+    "injected": 3602,
+    "recall": 0.9914,
+    "precision": 0.9881,
+    "f1": 0.9897,
+    "false_positive_rate": 0.00019,
+    "customer_collateral": 8e-05,
+    "top_reasons": {
+      "D11": 3391,
+      "D7": 39,
+      "D8": 176,
+      "D9": 8
+    },
+    "otp_per_second": 5625
+  },
+  "A6": {
+    "description": "repeated resends to the same numbers without verification",
+    "injected": 692,
+    "recall": 0.9798,
+    "precision": 1.0,
+    "f1": 0.9898,
+    "false_positive_rate": 0.0,
+    "customer_collateral": 0.0,
+    "top_reasons": {
+      "D8": 678
+    },
+    "otp_per_second": 5689
+  },
+  "A7": {
+    "description": "A1 during a legitimate traffic surge",
+    "injected": 777,
+    "recall": 0.9884,
+    "precision": 0.8951,
+    "f1": 0.9394,
+    "false_positive_rate": 0.00031,
+    "customer_collateral": 0.00035,
+    "top_reasons": {
+      "D5": 855,
+      "D6": 3
+    },
+    "otp_per_second": 5462
+  }
+}
