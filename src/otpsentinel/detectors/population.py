@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 import statistics
 
-from ..model import Signal
+from ..model import Action, Signal
 from .base import Context, Detector, clamp
 
 
@@ -63,10 +63,15 @@ class CountryShare(Detector):
         ratio = share / b
         if ratio < c["ratio_low"] or share - b < c["min_abs"]:
             return None
+        # the ratio says how far off the share is; the Poisson tail says whether the
+        # count behind it could be chance, which keeps small countries quiet
+        p = poisson_sf(int(n), b * total)
+        if p >= float(c.get("p_value", 1e-3)):
+            return None
         score = 0.3 + 0.7 * (ratio - c["ratio_low"]) / (c["ratio_high"] - c["ratio_low"])
         return self.signal(score * campaign_factor(ctx),
-                           f"{ctx.cc} is {share:.1%} of OTPs in the last {w} min (usually {b:.1%})",
-                           scope=f"country:{ctx.cc}")
+                           f"{ctx.cc} is {share:.1%} of OTPs in the last {w} min (usually {b:.1%}, "
+                           f"p={p:.1e})", scope=f"country:{ctx.cc}")
 
 
 class PrefixBurst(Detector):
@@ -105,16 +110,39 @@ class PrefixBurst(Detector):
 
 
 class Pacing(Detector):
-    """D7. Requests for one purpose arriving at a machine-like steady pace."""
+    """D7. Requests arriving at a machine-like steady pace.
+
+    Two series are kept: all requests for the purpose (catches a script working
+    through a customer list, incident I2) and requests for the purpose into one
+    destination country (catches pumping paced into a foreign country while home
+    traffic hides it). The stronger signal wins."""
 
     id, layer, name = "D7", "L3", "pacing regularity"
 
+    def _series(self, ctx: Context) -> list[tuple[str, str, str]]:
+        # (store key, baseline key, label)
+        out = [(f"ts:{ctx.purpose}", ctx.purpose, f"{ctx.purpose} requests")]
+        if ctx.cc != "ZZ" and self.cfg.get("per_country", True):
+            out.append((f"ts:{ctx.purpose}:{ctx.cc}", f"{ctx.purpose}:cc:{ctx.cc}",
+                        f"{ctx.purpose} requests to {ctx.cc}"))
+        return out
+
     def record(self, ctx: Context) -> None:
-        ctx.store.push_ts(f"ts:{ctx.purpose}", ctx.ts, int(self.cfg["last_n"]), 3600)
+        n = int(self.cfg["last_n"])
+        for key, _, _ in self._series(ctx):
+            ctx.store.push_ts(key, ctx.ts, n, 3600)
 
     def evaluate(self, ctx: Context) -> Signal | None:
+        best: Signal | None = None
+        for key, bkey, label in self._series(ctx):
+            s = self._evaluate_series(ctx, key, bkey, label)
+            if s is not None and (best is None or s.score > best.score):
+                best = s
+        return best
+
+    def _evaluate_series(self, ctx: Context, key: str, bkey: str, label: str) -> Signal | None:
         c = self.cfg
-        times = sorted(ctx.store.get_ts(f"ts:{ctx.purpose}"))
+        times = sorted(ctx.store.get_ts(key))
         if len(times) < max(10, int(c["last_n"]) // 2):
             return None
         span = times[-1] - times[0]
@@ -126,15 +154,15 @@ class Pacing(Detector):
             return None
         cv = statistics.pstdev(gaps) / mean
         rate_h = (len(times) - 1) / span * 3600
-        base = ctx.baselines.get("prate", ctx.purpose, ctx.hour_index)
+        base = ctx.baselines.get("prate", bkey, ctx.hour_index)
         expected = max(base.mean if base else 0.0, 5.0)
         if cv > c["max_cv"] or rate_h < c["min_rate_ratio"] * expected:
             return None
         score = 0.5 + 0.5 * (c["max_cv"] - cv) / c["max_cv"]
         return self.signal(score * campaign_factor(ctx),
-                           f"{ctx.purpose} requests every {mean:.1f}s with little variation "
+                           f"{label} every {mean:.1f}s with little variation "
                            f"(cv {cv:.2f}, {rate_h:.0f}/h vs ~{expected:.0f}/h)",
-                           scope=f"purpose:{ctx.purpose}")
+                           scope=f"purpose:{bkey}")
 
 
 class NetworkConcentration(Detector):
@@ -161,6 +189,10 @@ class NetworkConcentration(Detector):
                 continue
             cnt = ctx.store.window_sum(key, ctx.ts, w)
             if cnt > limit:
+                if c.get("hard_cap") and label == "IP":
+                    # plain per-IP rate limit, used for the 'conventional limiter' baseline
+                    return self.signal(1.0, f"{int(cnt)} requests from this IP in {w} min",
+                                       scope=f"net:{n.net}", force=Action.BLOCK, retry_after=w * 60)
                 s = clamp(0.4 + (cnt - limit) / limit)
                 if s > best:
                     best, why = s, f"{int(cnt)} requests from this {label} in {w} min"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -93,6 +94,9 @@ class Sentinel:
         if decision.allowed:
             for d in active:
                 d.sent(ctx)
+        else:
+            for d in active:
+                d.not_sent(ctx)
         store.set_json(f"req:{rid}", {"h": phone.hash, "cc": phone.region, "p": req.purpose,
                                       "ts": ts}, ttl_s=REQ_TTL)
         if self.audit is not None:
@@ -128,10 +132,15 @@ class Sentinel:
             self.audit.mark_verified(request_id, t)
         return True
 
-    def report_event(self, kind: str, ts: float, phone: str | None = None) -> None:
-        """Downstream activity (a login, an order) for the conversion detector."""
-        self.store.incr(f"ev:{kind}", ts)
-        self.store.incr("ev:any", ts)
+    def report_event(self, kind: str, ts: float | None = None, phone: str | None = None) -> None:
+        """Downstream activity (a login, an order) for the conversion detector (D11).
+        With ``phone`` the number is also remembered as a customer, which the replay
+        report uses to count collateral; the detectors do not read it."""
+        t = ts if ts is not None else time.time()
+        self.store.incr(f"ev:{kind}", t)
+        self.store.incr("ev:any", t)
+        if phone:
+            self.store.add_unique("cust", self.phones.parse(phone).hash, t, SEEN_TTL)
 
     # internals -----------------------------------------------------------------------
     def _count_attempt(self, ctx: Context) -> None:
@@ -139,6 +148,7 @@ class Sentinel:
         s.incr("otp:all", ts)
         s.incr(f"otp:cc:{ctx.cc}", ts)
         s.incr(f"otp:p:{ctx.purpose}", ts)
+        s.incr(f"otp:p:{ctx.purpose}:cc:{ctx.cc}", ts)
         self._remember(s, "known:cc", ctx.cc, ts)
         self._remember(s, "known:purpose", ctx.purpose, ts)
         if ctx.is_new_number and ctx.phone.e164:
@@ -149,11 +159,12 @@ class Sentinel:
             self._remember(s, f"act:rot:{ctx.hour_index}", f"{ctx.cc}:{ctx.purpose}", ts, ttl=4 * 3600)
 
     @staticmethod
-    def _remember(s: Store, list_key: str, item: str, ts: float, ttl: int = 60 * 86400) -> None:
-        if s.add_unique(list_key, item, ts, ttl):
-            items = s.get_json(list_key) or []
-            items.append(item)
-            s.set_json(list_key, items, ttl_s=ttl)
+    def _remember(s: Store, set_key: str, item: str, ts: float, ttl: int = 60 * 86400) -> None:
+        s.set_add(set_key, item, ttl)
+
+    @staticmethod
+    def _members(s: Store, set_key: str) -> list[str]:
+        return s.set_members(set_key)
 
     def _maybe_roll(self, ts: float, store: Store, bl: Baselines) -> None:
         h = hour(ts)
@@ -175,25 +186,55 @@ class Sentinel:
         end = (hh + 1) * 3600 - 1
         total = s.window_sum("otp:all", end, 60)
         if total >= 20:
-            for cc in s.get_json("known:cc") or []:
+            for cc in self._members(s, "known:cc"):
                 bl.update("share", cc, hh, s.window_sum(f"otp:cc:{cc}", end, 60) / total)
         ev_any = s.window_sum("ev:any", end, 60)
-        for p in s.get_json("known:purpose") or []:
+        for p in self._members(s, "known:purpose"):
             n = s.window_sum(f"otp:p:{p}", end, 60)
             bl.update("prate", p, hh, n)
             kinds = self._d11.kinds(p)
             if self.policy.event_feedback and kinds and (n >= 5 or ev_any > 0):
                 ev = sum(s.window_sum(f"ev:{k}", end, 60) for k in kinds)
                 bl.update("conv", p, hh, n / max(ev, 1.0))
-        for pfx in s.get_json(f"act:pfx:{hh}") or []:
+        for pfx in self._members(s, f"act:pfx:{hh}"):
             bl.update("pnew", pfx, hh, s.window_sum(f"pnewc:{pfx}", end, 60), by_hour_of_week=False)
-        for b in s.get_json(f"act:rot:{hh}") or []:
+        for b in self._members(s, f"act:rot:{hh}"):
             n = s.window_sum(f"rot:n:{b}", end, 60)
             if n >= 10:
                 bl.update("newip", b, hh, s.window_sum(f"rot:new:{b}", end, 60) / n, by_hour_of_week=False)
-        if self.policy.verification_feedback:
-            for key in s.get_json(f"act:pcc:{hh}") or []:
+        for key in self._members(s, f"act:pcc:{hh}"):
+            # per purpose-and-country request rate for the D7 country series
+            bl.update("prate", key, hh, s.window_sum(f"otp:p:{key}", end, 60))
+            if self.policy.verification_feedback:
                 sent = s.window_sum(f"snd:p:{key}", end, 60)
                 if sent >= 10:
                     ver = s.window_sum(f"ver:p:{key}", end, 60)
                     bl.update("vr", key, hh, min(1.0, ver / sent), by_hour_of_week=False)
+
+
+class AsyncSentinel:
+    """``Sentinel`` for asyncio applications. The store clients are synchronous, so
+    each call runs in the default executor; the event loop is never blocked."""
+
+    def __init__(self, sentinel: Sentinel):
+        self.sync = sentinel
+
+    @classmethod
+    def from_config(cls, *a, **kw) -> "AsyncSentinel":
+        return cls(Sentinel.from_config(*a, **kw))
+
+    async def _run(self, fn, *a, **kw):
+        import asyncio
+        return await asyncio.get_running_loop().run_in_executor(None, lambda: fn(*a, **kw))
+
+    async def check(self, req: OtpRequest) -> Decision:
+        return await self._run(self.sync.check, req)
+
+    async def report_sent(self, request_id: str, cost: float | None = None) -> None:
+        await self._run(self.sync.report_sent, request_id, cost)
+
+    async def report_verified(self, request_id: str, ts: float | None = None) -> bool:
+        return await self._run(self.sync.report_verified, request_id, ts)
+
+    async def report_event(self, kind: str, ts: float | None = None, phone: str | None = None) -> None:
+        await self._run(self.sync.report_event, kind, ts, phone)

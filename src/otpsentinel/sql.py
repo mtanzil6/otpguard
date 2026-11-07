@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (JSON, BigInteger, Column, DateTime, Float, Integer, MetaData, String, Table,
-                        Text, create_engine, insert, select, update)
+                        Text, create_engine, delete, insert, select, update)
 
 if TYPE_CHECKING:
     from .detectors.base import Context
@@ -142,3 +142,13 @@ class SqlAudit:
                                                    updated_at=_dt(time.time())))
                 n += 1
         return n
+
+    def prune(self, retention_days: int = 90, now: float | None = None) -> dict[str, int]:
+        """Delete decisions and closed alerts older than ``retention_days``. Run it from
+        cron (``otpsentinel prune --sql URL --days 90``); large installations may prefer
+        to partition ``otp_events`` by day in the database and drop partitions instead."""
+        cutoff = _dt((now if now is not None else time.time()) - retention_days * 86400)
+        with self.engine.begin() as c:
+            ev = c.execute(delete(otp_events).where(otp_events.c.created_at < cutoff)).rowcount
+            al = c.execute(delete(alerts).where(alerts.c.last_seen_at < cutoff)).rowcount
+        return {"otp_events": int(ev or 0), "alerts": int(al or 0)}

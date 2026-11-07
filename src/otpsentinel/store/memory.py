@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from collections import deque
 from typing import Any
 
@@ -17,6 +19,8 @@ class MemoryStore:
         self._h: dict[str, dict[int, float]] = {}
         self._unique: dict[str, float] = {}
         self._hll: dict[str, set[str]] = {}
+        self._sets: dict[str, tuple[set[str], float | None]] = {}
+        self._lock = threading.Lock()
         self._ts: dict[str, deque[float]] = {}
         self._kv: dict[str, Any] = {}
         self._writes = 0
@@ -57,7 +61,35 @@ class MemoryStore:
         lo = h - hours_for(minutes) + 1
         return sum(v for b, v in hb.items() if lo <= b <= h)
 
+    def reserve(self, key: str, ts: float, windows: list[tuple[int, float]],
+                amount: float = 1.0) -> tuple[bool, list[float]]:
+        with self._lock:
+            sums = [self.window_sum(key, ts, w) for w, _ in windows]
+            ok = all(s + amount <= limit for s, (_, limit) in zip(sums, windows))
+            if ok:
+                self.incr(key, ts, amount)
+            return ok, sums
+
     # sets ---------------------------------------------------------------------------
+    def set_add(self, key: str, member: str, ttl_s: int) -> bool:
+        s, _ = self._sets.get(key, (None, None))
+        if s is None:
+            s = set()
+        new = member not in s
+        s.add(member)
+        self._sets[key] = (s, (self._now or time.time()) + ttl_s if ttl_s else None)
+        return new
+
+    def set_members(self, key: str) -> list[str]:
+        item = self._sets.get(key)
+        if item is None:
+            return []
+        s, exp = item
+        if exp is not None and exp < self._now:
+            del self._sets[key]
+            return []
+        return list(s)
+
     def add_unique(self, key: str, member: str, ts: float, ttl_s: int) -> bool:
         k = f"{key}:{member}"
         exp = self._unique.get(k)
@@ -93,7 +125,9 @@ class MemoryStore:
         return value
 
     def set_json(self, key: str, value: Any, ttl_s: int | None = None) -> None:
-        exp = self._now + ttl_s if ttl_s else None
+        # before the first counter write the store has no clock of its own yet; use the
+        # wall clock so values seeded up front (warm-started baselines) do not expire at once
+        exp = (self._now or time.time()) + ttl_s if ttl_s else None
         self._kv[key] = (value, exp)
 
     def ping(self) -> bool:
@@ -104,6 +138,7 @@ class MemoryStore:
         now = self._now
         self._unique = {k: v for k, v in self._unique.items() if v >= now}
         self._kv = {k: v for k, v in self._kv.items() if v[1] is None or v[1] >= now}
+        self._sets = {k: v for k, v in self._sets.items() if v[1] is None or v[1] >= now}
         cutoff = int(now // 900) - 8
         for k in [k for k in self._hll if k.rsplit(":", 1)[-1].isdigit()
                   and int(k.rsplit(":", 1)[-1]) < cutoff]:

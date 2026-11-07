@@ -31,8 +31,9 @@ def cmd_validate(a) -> int:
 
 def cmd_replay(a) -> int:
     from .replay import Mapping, load_incidents, replay, write_report
-    rep = replay(a.log, _policy(a.policy), Mapping.load(a.mapping),
-                 load_incidents(a.incidents) if a.incidents else None,
+    mapping = Mapping.load(a.mapping)
+    rep = replay(a.log, _policy(a.policy), mapping,
+                 load_incidents(a.incidents, mapping.tz) if a.incidents else None,
                  as_enforced=not a.shadow, decisions_out=a.decisions,
                  progress_every=a.progress)
     j, m = write_report(rep, a.out)
@@ -52,10 +53,43 @@ def cmd_sim_inject(a) -> int:
     d = sim.scenario_defaults(a.scenario)
     hours = a.hours if a.hours is not None else d["hours"]
     rate = a.rate if a.rate is not None else d["rate"]
-    existing = sim.customers_in(a.base) if a.scenario == "A5" else None
+    otp_types = a.otp_types.split(",") if a.otp_types else None
+    if a.volume is not None:
+        rate = a.volume * sim.otp_rate_per_hour(a.base, otp_types)
+    ctypes = a.customer_types.split(",") if a.customer_types else None
+    existing = sim.customers_in(a.base, customer_types=ctypes) if a.scenario == "A5" else None
     attack = sim.attack(a.scenario, _ts(a.start), hours, rate, a.seed, existing)
     n = sim.write(sim.merge(sim.read(a.base), attack), a.out)
-    print(f"wrote {n:,} rows to {a.out} ({a.scenario}: {sim.SCENARIOS[a.scenario]})")
+    print(f"wrote {n:,} rows to {a.out} ({a.scenario}: {sim.SCENARIOS[a.scenario]}, "
+          f"{rate:.0f} attack requests/h)")
+    return 0
+
+
+def cmd_sim_assign_ips(a) -> int:
+    mix = None
+    if a.mix:
+        import yaml
+        mix = [(m["asn"], float(m["share"]), int(m["networks"])) for m in yaml.safe_load(open(a.mix))]
+    n = sim.write(sim.assign_ips(sim.read(a.base), mix, a.seed), a.out)
+    print(f"wrote {n:,} rows to {a.out}")
+    return 0
+
+
+def cmd_sim_import(a) -> int:
+    import yaml
+    rows, companion = sim.import_log(a.log, a.mapping)
+    n = sim.write(rows, a.out)
+    mpath = a.mapping_out or str(a.out).rsplit(".", 1)[0] + ".mapping.yaml"
+    with open(mpath, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(companion, fh, sort_keys=False)
+    print(f"wrote {n:,} rows to {a.out} and its replay mapping to {mpath}")
+    return 0
+
+
+def cmd_prune(a) -> int:
+    from .sql import SqlAudit
+    n = SqlAudit(a.sql, create=False).prune(a.days)
+    print(f"deleted {n['otp_events']:,} decisions and {n['alerts']:,} alerts older than {a.days} days")
     return 0
 
 
@@ -114,9 +148,31 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--start", required=True)
     i.add_argument("--hours", type=float)
     i.add_argument("--rate", type=float, help="attack requests per hour")
+    i.add_argument("--volume", type=float,
+                   help="attack rate as a fraction of the log's mean OTP rate (overrides --rate)")
+    i.add_argument("--otp-types", help="comma-separated types that are OTPs in --base (default otp:*)")
+    i.add_argument("--customer-types",
+                   help="comma-separated types that mark customers, for A5 (default event:*)")
     i.add_argument("--seed", type=int, default=7)
     i.add_argument("--out", required=True)
     i.set_defaults(fn=cmd_sim_inject)
+    im = ss.add_parser("import", help="convert a real log to the simulator schema, to inject attacks into it")
+    im.add_argument("log")
+    im.add_argument("--mapping", required=True)
+    im.add_argument("--out", required=True)
+    im.add_argument("--mapping-out", help="where to write the replay mapping (default: next to --out)")
+    im.set_defaults(fn=cmd_sim_import)
+    ai = ss.add_parser("assign-ips", help="give a log without addresses synthetic ones (for A2 / D8 / D9)")
+    ai.add_argument("--base", required=True)
+    ai.add_argument("--mix", help="YAML list of {asn, share, networks}")
+    ai.add_argument("--seed", type=int, default=11)
+    ai.add_argument("--out", required=True)
+    ai.set_defaults(fn=cmd_sim_assign_ips)
+
+    pr = sub.add_parser("prune", help="delete audit rows older than the retention period")
+    pr.add_argument("--sql", required=True)
+    pr.add_argument("--days", type=int, default=90)
+    pr.set_defaults(fn=cmd_prune)
 
     sv = sub.add_parser("serve", help="run the HTTP service")
     sv.add_argument("--policy")

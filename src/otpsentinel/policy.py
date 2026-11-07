@@ -4,9 +4,10 @@ from __future__ import annotations
 import copy
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -17,13 +18,13 @@ DEFAULT_DETECTORS: dict[str, dict[str, Any]] = {
     "D4": {"enabled": True, "weight": 0.8, "window_min": 60, "min_sent": 20,
            "prior_ratio": 0.7, "prior_strength": 20, "drop": 0.4},
     "D5": {"enabled": True, "weight": 0.7, "window_min": 60, "min_count": 20,
-           "ratio_low": 2.0, "ratio_high": 5.0, "min_abs": 0.01, "alpha": 0.05},
+           "ratio_low": 2.0, "ratio_high": 5.0, "min_abs": 0.01, "p_value": 1e-3, "alpha": 0.05},
     "D6": {"enabled": True, "weight": 0.7, "min_new": 8, "p_value": 1e-4, "alpha": 0.05,
            "cold_rate_per_hour": 1.0},
     "D7": {"enabled": True, "weight": 0.6, "last_n": 40, "max_cv": 0.35,
-           "min_rate_ratio": 3.0, "alpha": 0.05},
+           "min_rate_ratio": 3.0, "per_country": True, "alpha": 0.05},
     "D8": {"enabled": True, "weight": 0.6, "window_min": 10, "per_ip": 10, "per_net": 30,
-           "per_asn": 300, "hosting_score": 0.4},
+           "per_asn": 300, "hosting_score": 0.4, "hard_cap": False},
     "D9": {"enabled": True, "weight": 0.5, "min_count": 30, "distinct_ratio": 0.9,
            "new_ip_lift": 0.3},
     "D10": {"enabled": True, "weight": 0.7, "require_session": False, "min_age_ms": 800,
@@ -39,6 +40,7 @@ class CountryRule:
     risk: float = 0.0
     deny: bool = False
     budget_per_hour: float | None = None
+    budget_per_day: float | None = None
     price: float = 0.0
 
 
@@ -65,11 +67,14 @@ class Policy:
     default_region: str = "SA"
     home_countries: list[str] = field(default_factory=lambda: ["SA"])
     prefix_digits: int = 3
+    timezone: str = "UTC"                      # zone of campaign dates
     challenge_threshold: float = 0.5
     block_threshold: float = 0.85
     verification_feedback: bool = True         # app calls report_verified()
     event_feedback: bool = True                # app calls report_event()
     fail_mode: str = "open"                    # open | closed
+    budget_per_hour: float | None = None       # total spend across all countries
+    budget_per_day: float | None = None
     challenge_relief: float = 0.3              # weight multiplier for client-side detectors after a solved challenge
     foreign_default_risk: float = 0.2
     default_purpose: PurposeRule = field(default_factory=PurposeRule)
@@ -88,7 +93,9 @@ class Policy:
         if iso in self.countries:
             return self.countries[iso]
         if iso in self.home_countries:
-            return CountryRule(risk=0.0)
+            # no risk, but the default price still applies so total budgets count home spend
+            d = self.default_country
+            return CountryRule(risk=0.0, price=d.price if d else 0.0)
         if self.default_country is not None:
             return self.default_country
         return CountryRule(risk=self.foreign_default_risk)
@@ -134,13 +141,21 @@ class Policy:
         p.default_region = d.get("default_region", p.default_region)
         p.home_countries = list(d.get("home_countries", p.home_countries))
         p.prefix_digits = int(d.get("prefix_digits", p.prefix_digits))
+        p.timezone = str(d.get("timezone", p.timezone))
+        tz = ZoneInfo(p.timezone)
         th = d.get("thresholds", {})
         p.challenge_threshold = float(th.get("challenge", p.challenge_threshold))
         p.block_threshold = float(th.get("block", p.block_threshold))
         fb = d.get("feedback", {})
         p.verification_feedback = bool(fb.get("verification", p.verification_feedback))
         p.event_feedback = bool(fb.get("events", p.event_feedback))
-        p.fail_mode = d.get("fail_mode", p.fail_mode)
+        fm = str(d.get("fail_mode", p.fail_mode))
+        p.fail_mode = {"open_with_local_limits": "open"}.get(fm, fm)
+        if p.fail_mode not in ("open", "closed"):
+            raise ValueError(f"fail_mode must be open or closed, not {fm!r}")
+        budget = d.get("budget", {}) or {}
+        p.budget_per_hour = budget.get("per_hour")
+        p.budget_per_day = budget.get("per_day")
         p.challenge_relief = float(d.get("challenge_relief", p.challenge_relief))
         p.foreign_default_risk = float(d.get("foreign_default_risk", p.foreign_default_risk))
 
@@ -158,7 +173,7 @@ class Policy:
         for det_id, cfg in (d.get("detectors", {}) or {}).items():
             base = p.detectors.setdefault(det_id, {})
             base.update(cfg or {})
-        p.campaigns = [Campaign(c["name"], _ts(c["start"]), _ts(c["end"], end=True))
+        p.campaigns = [Campaign(c["name"], _ts(c["start"], tz=tz), _ts(c["end"], end=True, tz=tz))
                        for c in d.get("campaigns", []) or []]
         if p.challenge_threshold > p.block_threshold:
             raise ValueError("challenge threshold must not be above the block threshold")
@@ -180,20 +195,23 @@ def _purpose(v: dict[str, Any] | None, base: PurposeRule) -> PurposeRule:
 def _country(v: dict[str, Any] | None) -> CountryRule:
     v = v or {}
     return CountryRule(risk=float(v.get("risk", 0.0)), deny=bool(v.get("deny", False)),
-                       budget_per_hour=v.get("budget_per_hour"), price=float(v.get("price", 0.0)))
+                       budget_per_hour=v.get("budget_per_hour"), budget_per_day=v.get("budget_per_day"),
+                       price=float(v.get("price", 0.0)))
 
 
-def _ts(v: Any, end: bool = False) -> float:
+def _ts(v: Any, end: bool = False, tz: tzinfo = timezone.utc) -> float:
+    """Epoch seconds for a date, date-time or number. Naive values are in ``tz``; a
+    plain date with ``end=True`` means the end of that day."""
     if isinstance(v, (int, float)):
         return float(v)
     if hasattr(v, "year") and not isinstance(v, datetime):   # a plain date from YAML
-        dt = datetime(v.year, v.month, v.day, tzinfo=timezone.utc)
+        dt = datetime(v.year, v.month, v.day, tzinfo=tz)
         return dt.timestamp() + (86400 if end else 0)
     if isinstance(v, datetime):
-        return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).timestamp()
+        return (v if v.tzinfo else v.replace(tzinfo=tz)).timestamp()
     dt = datetime.fromisoformat(str(v))
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=tz)
     if end and len(str(v)) == 10:
         return dt.timestamp() + 86400
     return dt.timestamp()

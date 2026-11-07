@@ -1,0 +1,23 @@
+{
+  "machine": "Linux-6.18.44-fc-v310-x86_64-with-glibc2.39",
+  "python": "3.13.18",
+  "cpu": "x86_64",
+  "backends": {
+    "memory": {
+      "n": 20000,
+      "p50_ms": 0.183,
+      "p90_ms": 0.221,
+      "p99_ms": 0.327,
+      "mean_ms": 0.192,
+      "decisions_per_s": 5207
+    },
+    "redis": {
+      "n": 20000,
+      "p50_ms": 4.518,
+      "p90_ms": 6.014,
+      "p99_ms": 8.523,
+      "mean_ms": 4.774,
+      "decisions_per_s": 209
+    }
+  }
+}

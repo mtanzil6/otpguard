@@ -5,6 +5,7 @@ mode: shadow
 secret: env:OTPSENTINEL_SECRET     # HMAC key for phone numbers; never commit the real one
 default_region: SA
 home_countries: [SA]
+timezone: Asia/Riyadh              # campaign dates below are in this zone
 prefix_digits: 3
 
 thresholds:
@@ -24,19 +25,23 @@ purposes:
   reset_password: {cap_1h: 4, cap_24h: 6, weights: {D7: 0.8, D11: 0.7}}
 
 countries:
-  default: {risk: 0.2, price: 0.06, budget_per_hour: 6}
-  SA:      {risk: 0.0, price: 0.03, budget_per_hour: 80}
-  AE:      {risk: 0.1, price: 0.05, budget_per_hour: 12}
-  OM:      {risk: 0.2, price: 0.06, budget_per_hour: 6}
+  default: {risk: 0.2, price: 0.06, budget_per_hour: 6,  budget_per_day: 60}
+  SA:      {risk: 0.0, price: 0.03, budget_per_hour: 80, budget_per_day: 1200}
+  AE:      {risk: 0.1, price: 0.05, budget_per_hour: 12, budget_per_day: 150}
+  OM:      {risk: 0.2, price: 0.06, budget_per_hour: 6,  budget_per_day: 60}
+
+# total spend over all countries (D12); above a budget: challenge; above
+# block_factor x budget: block. Hard levels are reserved atomically.
+budget: {per_hour: 100, per_day: 1500}
 
 # prefixes you never send to (1.0) or want to treat as risky (0..1)
 prefixes:
   "+88216": 1.0
 
 detectors:
-  D5:  {window_min: 60, ratio_low: 2.0, ratio_high: 5.0, weight: 0.7}
+  D5:  {window_min: 60, ratio_low: 2.0, ratio_high: 5.0, p_value: 1.0e-3, weight: 0.7}
   D6:  {min_new: 8, p_value: 1.0e-4, weight: 0.7}
-  D7:  {last_n: 40, max_cv: 0.35, weight: 0.6}
+  D7:  {last_n: 40, max_cv: 0.35, per_country: true, weight: 0.6}
   # only purposes listed here are checked for a missing follow-up
   D11: {events: {reset_password: [login_success, order]}}
 
@@ -44,4 +49,4 @@ detectors:
 campaigns:
   - {name: white-friday, start: 2026-11-20, end: 2026-11-29}
 
-fail_mode: open
+fail_mode: open      # open (per-process limits while Redis is down) | closed

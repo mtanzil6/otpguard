@@ -51,6 +51,8 @@ Feedback makes it much better. `report_verified()` feeds the verification-ratio 
 resend checks; `report_event("order", ts)` (or logins, or whatever should follow an
 OTP) feeds the conversion check.
 
+For asyncio apps, `AsyncSentinel.from_config(...)` has the same methods as coroutines.
+
 ### HTTP
 
 ```bash
@@ -61,7 +63,7 @@ otpsentinel serve --policy policy.yaml --redis redis://localhost:6379/0 --port 8
 POST /v1/check     {"phone": "...", "purpose": "login", "ip": "..."}  -> {"action": "allow", "allowed": true, "request_id": "...", ...}
 POST /v1/sent      {"request_id": "...", "cost": 0.04}
 POST /v1/verified  {"request_id": "..."}
-POST /v1/event     {"kind": "order"}
+POST /v1/event     {"kind": "order", "phone": "..."}
 GET  /health
 ```
 
@@ -83,7 +85,7 @@ Reasons are not returned to the client unless you start the server with
 | D9 | IP rotation | far more never-seen IPs than usual in a country/purpose bucket |
 | D10 | client integrity | session token age and reuse, device attestation |
 | D11 | conversion mismatch | e.g. password resets rising while logins don't |
-| D12 | spend budget | hourly spend per country (challenge, then block) |
+| D12 | spend budget | spend per country and in total, per hour and per day (challenge, then block) |
 
 Each detector returns a score between 0 and 1. Scores are combined with a weighted
 noisy-OR (`risk = 1 - Π(1 - wᵢ·sᵢ)`); hard rules (caps, deny lists, exhausted budgets)
@@ -95,9 +97,12 @@ D8–D10 only run when you pass an IP or session data. Nothing breaks without th
 ## Storage
 
 - **Redis** for live counters (1-minute and 1-hour buckets, HyperLogLog for distinct
-  counts). Shared by all app servers.
+  IPs). Shared by all app servers. The hard rules (per-number caps, spend budgets) are
+  checked and taken in one Lua script, so concurrent requests on different servers
+  cannot pass a cap together; the other detectors read counters with plain MGETs.
 - **SQL** (anything SQLAlchemy supports) for the audit trail: one row per decision,
-  outcomes, policy versions and grouped alerts.
+  outcomes, policy versions and grouped alerts. `otpsentinel prune --sql URL --days 90`
+  deletes old rows (run it from cron).
 - **Memory** for tests, replay and single-process setups.
 
 Phone numbers are stored only as an HMAC under your secret (`OTPSENTINEL_SECRET`);
@@ -117,9 +122,13 @@ otpsentinel replay sms_log.csv --mapping mapping.yaml --policy policy.yaml \
     --incidents incidents.yaml --out report/
 ```
 
-The mapping file says which columns to read and which message types are OTPs (and for
-which purpose) or follow-up events. See
-[`examples/mapping-synthetic.yaml`](examples/mapping-synthetic.yaml). The report lists
+The log can be CSV or JSON Lines, optionally gzipped. The mapping file says which
+columns to read, the time zone of the timestamps, which message types are OTPs (and for
+which purpose), which are follow-up events for D11 (`events`) and which mark a real
+customer for the collateral figure (`customer_events`; keep these different from
+`events`, or D11 is graded on its own input). See
+[`examples/mapping-case-study.yaml`](examples/mapping-case-study.yaml) and
+[`examples/incidents-case-study.yaml`](examples/incidents-case-study.yaml). The report lists
 what would have been challenged or blocked, per day and per detector, how many likely
 customers (numbers that got an order or delivery message within a week) were caught,
 and, for windows you label in the incidents file, how quickly and how much was caught.
@@ -132,22 +141,38 @@ otpsentinel simulate inject --base base.csv --scenario A2 --start 2026-01-26T10:
 otpsentinel replay mixed.csv --mapping examples/mapping-synthetic.yaml --policy examples/policy.yaml
 ```
 
+To inject attacks into your own log instead of synthetic traffic:
+
+```bash
+otpsentinel simulate import sms_log.csv --mapping mapping.yaml --out base.csv   # also writes base.mapping.yaml
+otpsentinel simulate assign-ips --base base.csv --mix examples/asn-mix.yaml --out base_ip.csv   # optional, for A2/D8/D9
+otpsentinel simulate inject --base base_ip.csv --scenario A2 --start 2022-05-10T10:00 --volume 0.05 --out mixed.csv
+otpsentinel replay mixed.csv --mapping base.mapping.yaml --policy policy.yaml
+```
+
+`--volume` sets the attack rate as a fraction of the log's average OTP rate.
+
 Scenarios: A1 pumping to one country from a few IPs, A2 the same with a fresh IP per
 request, A3 sequential numbers from one prefix, A4 low and slow, A5 one reset to each of
 many existing customers, A6 resend loops, A7 A1 during a sale.
-`python benchmarks/run_scenarios.py` runs all of them; results from the current version
-are in [`benchmarks/results`](benchmarks/results/scenarios.md). They come from synthetic
+`python benchmarks/run_scenarios.py` runs all of them; add `--seeds 10`, `--volumes 0.01
+0.05 0.1 0.2`, `--designs full limiter without-L1 without-L3 without-L4` (a conventional
+per-number + per-IP limiter and layer ablations) and `--base`/`--mapping` for your own
+imported log. `python benchmarks/latency.py --redis redis://localhost:6379/1` measures
+decision latency. Results from the current version are in
+[`benchmarks/results`](benchmarks/results/scenarios.md). They come from synthetic
 traffic, so treat them as a sanity check rather than a promise.
 
 ## Limits
 
-- Caps are checked and then incremented, not atomically, so two requests racing on
-  different servers can both get through at the edge of a cap.
+- A decision makes several Redis round trips (one per counter family); only the hard
+  rules are atomic. Soft scores can be off by a request or two under heavy concurrency.
 - Baselines need a few days of traffic. Until then the caps, country rules and
   budgets do most of the work.
 - An attacker who spreads traffic thinly over many countries, each below its usual
   share, is mostly stopped by the budgets, not by detection.
-- Times in replay are taken as they appear in the log. Use one time zone throughout.
+- Set `timezone` in the mapping and the policy to the zone your log is written in;
+  naive timestamps and campaign dates are read in that zone.
 
 ## Development
 

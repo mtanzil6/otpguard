@@ -1,0 +1,20 @@
+# Mapping for a real SMS log with only a timestamp, a number and a message type.
+# Column names and type labels are placeholders; edit them to match your export.
+columns: {timestamp: sent_at, phone: msisdn, type: message_type}
+timestamp_format: "%Y-%m-%d %H:%M:%S"
+timezone: Asia/Riyadh
+otp:
+  REGISTER_OTP: register
+  REGISTER_OTP_RESEND: register+resend
+  LOGIN_OTP: login
+  LOGIN_OTP_RESEND: login+resend
+  RESET_PASSWORD_OTP: reset_password
+  CHANGE_ADDRESS_OTP: change_phone
+# what D11 reads as the follow-up activity for a purpose (see detectors.D11.events)
+events:
+  ORDER_CONFIRMED: order
+# what counts as a real customer for the collateral figure. Keep this different
+# from `events`, otherwise D11 is graded on its own input.
+customer_events: [SHIPPED, OUT_FOR_DELIVERY, DELIVERED]
+customer_window_days: 7
+feedback: {verification: false}

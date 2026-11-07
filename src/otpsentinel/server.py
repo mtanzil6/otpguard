@@ -41,6 +41,7 @@ class VerifiedBody(BaseModel):
 class EventBody(BaseModel):
     kind: str
     timestamp: float | None = None
+    phone: str | None = None
 
 
 def create_app(sentinel: Sentinel | None = None, show_reasons: bool = False) -> FastAPI:
@@ -79,7 +80,7 @@ def create_app(sentinel: Sentinel | None = None, show_reasons: bool = False) -> 
 
     @app.post("/v1/event")
     def event(body: EventBody):
-        sentinel.report_event(body.kind, body.timestamp or time.time())
+        sentinel.report_event(body.kind, body.timestamp or time.time(), body.phone)
         return {"ok": True}
 
     return app

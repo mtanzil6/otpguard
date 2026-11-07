@@ -31,8 +31,21 @@ class Store(Protocol):
         """Sum of a counter over the last ``minutes`` (minute buckets up to two hours,
         hour buckets beyond that)."""
 
+    def reserve(self, key: str, ts: float, windows: list[tuple[int, float]],
+                amount: float = 1.0) -> tuple[bool, list[float]]:
+        """Atomically check-and-increment. ``windows`` is a list of (minutes, limit):
+        the counter is incremented by ``amount`` only if, for every window, the
+        current sum plus ``amount`` is at or below the limit. Returns (ok, sums before
+        the increment, one per window). On Redis this is one Lua script, so concurrent
+        requests on different servers cannot race past a cap."""
+
     def add_unique(self, key: str, member: str, ts: float, ttl_s: int) -> bool:
         """Remember ``member``; True if it was not already known."""
+
+    def set_add(self, key: str, member: str, ttl_s: int) -> bool:
+        """Add to a plain set; True if it was new."""
+
+    def set_members(self, key: str) -> list[str]: ...
 
     def hll_add(self, key: str, member: str, ttl_s: int) -> None: ...
 

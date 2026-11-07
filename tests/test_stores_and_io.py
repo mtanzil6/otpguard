@@ -100,3 +100,47 @@ def test_simulator_scenarios_are_labelled():
         assert rows == sorted(rows, key=lambda r: r.ts)
     a5 = list(sim.attack("A5", start, 1, 0, existing=["+966500000001", "+966500000002"]))
     assert [r.type for r in a5] == ["otp:reset_password"] * 2
+
+
+def test_import_real_log_inject_and_replay(tmp_path):
+    """A log in the case-study shape (own column names, local time, shipping messages as
+    the customer proxy) goes through import → inject → replay."""
+    import csv
+    from datetime import datetime, timedelta, timezone
+
+    from otpsentinel import simulate as sim
+    from otpsentinel.policy import Policy
+    from otpsentinel.replay import Mapping, replay
+
+    raw = tmp_path / "raw.csv"
+    t = datetime(2022, 6, 1, 0, 0, 0)
+    with open(raw, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["sent_at", "msisdn", "message_type"])
+        for i in range(3000):
+            ph = f"9665{i % 700:08d}"
+            w.writerow([(t + timedelta(seconds=40 * i)).strftime("%Y-%m-%d %H:%M:%S"), ph, "LOGIN_OTP"])
+            if i % 3 == 0:
+                w.writerow([(t + timedelta(seconds=40 * i + 5)).strftime("%Y-%m-%d %H:%M:%S"), ph, "SHIPPED"])
+    mapping = tmp_path / "m.yaml"
+    mapping.write_text("columns: {timestamp: sent_at, phone: msisdn, type: message_type}\n"
+                       "timestamp_format: '%Y-%m-%d %H:%M:%S'\ntimezone: Asia/Riyadh\n"
+                       "otp: {LOGIN_OTP: login}\ncustomer_events: [SHIPPED]\n")
+    rows, companion = sim.import_log(raw, mapping)
+    base = tmp_path / "base.csv"
+    sim.write(rows, base)
+    first = next(sim.read(base))
+    assert first.type == "otp:login"
+    # 00:00 in Riyadh is 21:00 UTC the day before
+    assert datetime.fromtimestamp(first.ts, timezone.utc).hour == 21
+    assert companion["customer_events"] == ["customer"]
+    existing = sim.customers_in(base)
+    assert existing and all(p.startswith("9665") for p in existing)
+    mixed = tmp_path / "mixed.csv"
+    sim.write(sim.merge(sim.read(base), sim.attack("A5", first.ts + 20 * 3600, 2, 0, 7, existing)), mixed)
+    cm = tmp_path / "cm.yaml"
+    import yaml
+    cm.write_text(yaml.safe_dump(companion))
+    rep = replay(mixed, Policy(), Mapping.load(cm))
+    assert rep["labelled"]["per_scenario"]["A5"]["injected"] > 0
+    assert rep["customer_proxy_is_d11_input"] is False

@@ -68,6 +68,9 @@ class Detector:
     def sent(self, ctx: Context) -> None:
         """Called when the OTP is going out (allowed, or shadow mode)."""
 
+    def not_sent(self, ctx: Context) -> None:
+        """Called when the OTP is not going out, so reservations can be given back."""
+
     def signal(self, score: float, detail: str, scope: str = "", **kw) -> Signal:
         return Signal(detector=self.id, score=max(0.0, min(1.0, score)), detail=detail, scope=scope, **kw)
 

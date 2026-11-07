@@ -174,11 +174,108 @@ def read(path: str | Path) -> Iterator[Row]:
             yield Row(float(d["timestamp"]), d["phone"], d["type"], d.get("ip", ""), d.get("label", ""))
 
 
-def customers_in(path: str | Path, limit: int = 5000, seed: int = 3) -> list[str]:
-    seen = {r.phone for r in read(path) if r.type.startswith("event:")}
+def customers_in(path: str | Path, limit: int = 5000, seed: int = 3,
+                 customer_types: Iterable[str] | None = None) -> list[str]:
+    """Numbers that look like real customers: those that received one of
+    ``customer_types`` (default: any ``event:`` row). For a real log pass the shipping
+    or delivery message types."""
+    types = set(customer_types or ())
+    rows = list(read(path))
+    if not types:
+        # an imported real log marks customers with type "customer"; synthetic logs use events
+        types = {"customer"} if any(r.type == "customer" for r in rows) else set()
+    seen = {r.phone for r in rows
+            if ((r.type in types) if types else r.type.startswith("event:"))}
     out = sorted(seen)
     random.Random(seed).shuffle(out)
     return out[:limit]
+
+
+def otp_rate_per_hour(path: str | Path, otp_types: Iterable[str] | None = None) -> float:
+    """Mean OTP requests per hour in a log, for ``--volume`` (attack rate as a fraction
+    of the legitimate rate)."""
+    types = set(otp_types or ())
+    n, t0, t1 = 0, None, None
+    for r in read(path):
+        if ((r.type in types) if types else r.type.startswith("otp:")):
+            n += 1
+            t0 = r.ts if t0 is None else min(t0, r.ts)
+            t1 = r.ts if t1 is None else max(t1, r.ts)
+    if not n or t1 == t0:
+        return 0.0
+    return n / ((t1 - t0) / 3600)
+
+
+# (ASN label, share of customers, number of /24 networks it holds). Used to give a
+# log with no addresses plausible ones, so that A2's fresh residential addresses
+# stand against something. Stated, not measured; replace with your own mix.
+DEFAULT_ASN_MIX = [("stc", 0.45, 600), ("mobily", 0.30, 400), ("zain", 0.20, 300), ("other", 0.05, 200)]
+
+
+def assign_ips(rows: Iterable[Row], mix: list[tuple[str, float, int]] | None = None,
+               seed: int = 11, churn: float = 0.15) -> Iterator[Row]:
+    """Give rows without an IP a synthetic one. Each number gets a home network in an
+    ASN drawn from ``mix``; ``churn`` is the chance a request comes from another
+    address in the same ASN (mobile users move between NAT pools). Labelled attack
+    rows that already carry an IP are left alone."""
+    mix = mix or DEFAULT_ASN_MIX
+    rng = random.Random(seed)
+    homes: dict[str, tuple[int, int]] = {}
+    base = {}
+    off = 0
+    for i, (_, _, nets) in enumerate(mix):
+        base[i] = off
+        off += nets
+    for r in rows:
+        if r.ip:
+            yield r
+            continue
+        h = homes.get(r.phone)
+        if h is None:
+            asn = _pick(rng, [(i, share) for i, (_, share, _) in enumerate(mix)])
+            h = (asn, rng.randrange(mix[asn][2]))
+            homes[r.phone] = h
+        asn, net = h
+        if rng.random() < churn:
+            net = rng.randrange(mix[asn][2])
+        n = base[asn] + net
+        yield Row(r.ts, r.phone, r.type, f"10.{n // 250}.{n % 250}.{rng.randrange(1, 9)}", r.label)
+
+
+def import_log(log_path: str | Path, mapping_path: str | Path) -> tuple[Iterator[Row], dict]:
+    """Convert a real log (any columns, read through a replay mapping) to the simulator's
+    schema, so attacks can be injected into it. OTP types become ``otp:<purpose>`` (with
+    ``+resend``), D11 event types ``event:<kind>``, and customer-proxy types ``customer``
+    (a row that is both is written twice). Timestamps become epoch seconds, so the time
+    zone is applied once, here. Returns the rows and a mapping for replaying the result."""
+    from .replay import Mapping, read_log   # local import: replay imports this module's users
+    m = Mapping.load(mapping_path)
+
+    def rows() -> Iterator[Row]:
+        for r in read_log(log_path, m):
+            t, ph, ip = r["type"], r["phone"], r["ip"] or ""
+            if t in m.otp:
+                purpose, resend = m.otp[t]
+                yield Row(r["ts"], ph, f"otp:{purpose}{'+resend' if resend else ''}", ip, r["label"])
+                continue
+            if t in m.events:
+                yield Row(r["ts"], ph, f"event:{m.events[t]}", ip, r["label"])
+            if t in m.customer_types:
+                yield Row(r["ts"], ph, "customer", ip, r["label"])
+
+    kinds = sorted(set(m.events.values()))
+    purposes = sorted({f"{p}{'+resend' if rs else ''}" for p, rs in m.otp.values()})
+    # attacks are always written as register / reset_password / login(+resend) OTPs
+    purposes = sorted(set(purposes) | {"register", "register+resend", "reset_password", "login+resend"})
+    companion = {
+        "columns": {"timestamp": "timestamp", "phone": "phone", "type": "type", "ip": "ip", "label": "label"},
+        "otp": {f"otp:{p}": p for p in purposes},
+        "events": {f"event:{k}": k for k in kinds},
+        "customer_events": ["customer"] if m.customer_types else [f"event:{k}" for k in kinds],
+        "customer_window_days": m.customer_window_days,
+        "feedback": {"verification": m.verification},
+    }
+    return rows(), companion
 
 
 SCENARIOS = {

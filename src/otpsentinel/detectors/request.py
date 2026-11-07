@@ -6,7 +6,11 @@ from .base import Context, Detector
 
 
 class PurposeCap(Detector):
-    """D1. Hard cap on OTPs to one number per purpose."""
+    """D1. Hard cap on OTPs to one number per purpose.
+
+    The cap is checked and taken in one atomic store operation (``Store.reserve``), so
+    two requests racing on different servers cannot both pass at the edge of the cap.
+    If another detector blocks the request afterwards the reservation is given back."""
 
     id, layer, name = "D1", "L1", "purpose cap"
 
@@ -15,19 +19,20 @@ class PurposeCap(Detector):
 
     def evaluate(self, ctx: Context) -> Signal | None:
         rule = ctx.policy.purpose(ctx.purpose)
-        k = self._key(ctx)
-        c1 = ctx.store.window_sum(k, ctx.ts, 60)
+        ok, (c1, c24) = ctx.store.reserve(self._key(ctx), ctx.ts,
+                                          [(60, rule.cap_1h), (1440, rule.cap_24h)])
+        if ok:
+            ctx.notes["D1_reserved"] = True
+            return None
         if c1 >= rule.cap_1h:
             return self.signal(1.0, f"{int(c1)} {ctx.purpose} codes to this number in the last hour",
                                scope=f"phone:{ctx.phone.hash}", force=Action.BLOCK, retry_after=3600)
-        c24 = ctx.store.window_sum(k, ctx.ts, 1440)
-        if c24 >= rule.cap_24h:
-            return self.signal(1.0, f"{int(c24)} {ctx.purpose} codes to this number in 24 hours",
-                               scope=f"phone:{ctx.phone.hash}", force=Action.BLOCK, retry_after=6 * 3600)
-        return None
+        return self.signal(1.0, f"{int(c24)} {ctx.purpose} codes to this number in 24 hours",
+                           scope=f"phone:{ctx.phone.hash}", force=Action.BLOCK, retry_after=6 * 3600)
 
-    def sent(self, ctx: Context) -> None:
-        ctx.store.incr(self._key(ctx), ctx.ts)
+    def not_sent(self, ctx: Context) -> None:
+        if ctx.notes.pop("D1_reserved", False):
+            ctx.store.incr(self._key(ctx), ctx.ts, -1.0)
 
 
 class DestinationRisk(Detector):

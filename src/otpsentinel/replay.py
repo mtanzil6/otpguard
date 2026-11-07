@@ -9,9 +9,10 @@ import json
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -32,9 +33,12 @@ class Mapping:
     label_col: str | None = None
     ts_format: str | None = None
     otp: dict[str, tuple[str, bool]] = field(default_factory=dict)    # type -> (purpose, is_resend)
-    events: dict[str, str] = field(default_factory=dict)              # type -> event kind
+    events: dict[str, str] = field(default_factory=dict)              # type -> event kind (fed to D11)
+    customer_types: set[str] = field(default_factory=set)             # types that mark a real customer
     verification: bool = False
     customer_window_days: int = 7
+    tz: tzinfo = timezone.utc                                          # zone of naive timestamps
+    customer_proxy_is_d11_input: bool = True
 
     @classmethod
     def load(cls, path: str | Path) -> "Mapping":
@@ -49,6 +53,14 @@ class Mapping:
             purpose, _, flag = str(v).partition("+")
             m.otp[str(t)] = (purpose, flag == "resend")
         m.events = {str(k): str(v) for k, v in (d.get("events") or {}).items()}
+        # The customer proxy must not be the same signal D11 reads, or the collateral
+        # figure grades a detector on its own input. If ``customer_events`` is not
+        # given, the event types are used for both (and the report says so).
+        ce = d.get("customer_events")
+        m.customer_types = {str(x) for x in ce} if ce else set(m.events)
+        m.customer_proxy_is_d11_input = ce is None
+        if d.get("timezone"):
+            m.tz = ZoneInfo(str(d["timezone"]))
         return m
 
 
@@ -72,7 +84,7 @@ class Incident:
         return True
 
 
-def load_incidents(path: str | Path) -> list[Incident]:
+def load_incidents(path: str | Path, tz: tzinfo = timezone.utc) -> list[Incident]:
     d = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
     out = []
     for x in d:
@@ -80,7 +92,7 @@ def load_incidents(path: str | Path) -> list[Incident]:
         for i, w in enumerate(windows):
             out.append(Incident(id=x["id"] if len(windows) == 1 else f"{x['id']}.{i + 1}",
                                 label=x.get("label", "unlabelled"),
-                                start=_ts(w["start"]), end=_ts(w["end"], end=True),
+                                start=_ts(w["start"], tz=tz), end=_ts(w["end"], end=True, tz=tz),
                                 purposes=set(x["purposes"]) if x.get("purposes") else None,
                                 countries=set(x["countries"]) if x.get("countries") else None,
                                 baseline_per_day=x.get("baseline_per_day")))
@@ -94,30 +106,47 @@ def _open(path: str | Path):
     return open(p, encoding="utf-8", errors="replace", newline="")
 
 
-def parse_ts(value: str, fmt: str | None) -> float | None:
-    v = value.strip()
+def parse_ts(value: Any, fmt: str | None, tz: tzinfo = timezone.utc) -> float | None:
+    """Epoch seconds. Numbers are taken as epoch; naive date-times are in ``tz``."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    v = str(value).strip()
     if not v:
         return None
     try:
         if fmt:
-            return datetime.strptime(v, fmt).replace(tzinfo=timezone.utc).timestamp()
+            return datetime.strptime(v, fmt).replace(tzinfo=tz).timestamp()
         if v.replace(".", "", 1).isdigit():
             return float(v)
         dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
-        return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+        return (dt if dt.tzinfo else dt.replace(tzinfo=tz)).timestamp()
     except ValueError:
         return None
 
 
-def read_log(path: str | Path, m: Mapping) -> Iterator[dict[str, Any]]:
+def _rows(path: str | Path) -> Iterator[dict[str, Any]]:
+    """CSV or JSON Lines, optionally gzipped."""
+    name = str(path)
+    if name.endswith(".gz"):
+        name = name[:-3]
     with _open(path) as fh:
-        for row in csv.DictReader(fh):
-            ts = parse_ts(row.get(m.ts_col, "") or "", m.ts_format)
-            if ts is None:
-                continue
-            yield {"ts": ts, "phone": row.get(m.phone_col, "") or "", "type": row.get(m.type_col, "") or "",
-                   "ip": row.get(m.ip_col) if m.ip_col else None,
-                   "label": (row.get(m.label_col) or "") if m.label_col else ""}
+        if name.endswith((".jsonl", ".ndjson", ".json")):
+            for line in fh:
+                line = line.strip()
+                if line:
+                    yield json.loads(line)
+        else:
+            yield from csv.DictReader(fh)
+
+
+def read_log(path: str | Path, m: Mapping) -> Iterator[dict[str, Any]]:
+    for row in _rows(path):
+        ts = parse_ts(row.get(m.ts_col, ""), m.ts_format, m.tz)
+        if ts is None:
+            continue
+        yield {"ts": ts, "phone": str(row.get(m.phone_col, "") or ""), "type": str(row.get(m.type_col, "") or ""),
+               "ip": row.get(m.ip_col) if m.ip_col else None,
+               "label": str(row.get(m.label_col) or "") if m.label_col else ""}
 
 
 @dataclass
@@ -160,10 +189,11 @@ def replay(log_path: str | Path, policy: Policy, mapping: Mapping, incidents: li
             raise ValueError("log is not in time order; sort it by timestamp first")
         last_ts = r["ts"] if last_ts is None else max(last_ts, r["ts"])
         t = r["type"]
-        if t in mapping.events:
-            n_events += 1
-            g.report_event(mapping.events[t], r["ts"])
-            if r["phone"]:
+        if t in mapping.events or t in mapping.customer_types:
+            if t in mapping.events:
+                n_events += 1
+                g.report_event(mapping.events[t], r["ts"])
+            if t in mapping.customer_types and r["phone"]:
                 customer_events[g.phones.parse(r["phone"]).hash].append(r["ts"])
             continue
         spec = mapping.otp.get(t)
@@ -217,6 +247,8 @@ def replay(log_path: str | Path, policy: Policy, mapping: Mapping, incidents: li
         "detectors_fired": dict(sorted(fired.items())),
         "top_reason_when_flagged": dict(sorted(top.items())),
         "inactive_detectors": _inactive(policy, mapping),
+        "customer_proxy": sorted(mapping.customer_types),
+        "customer_proxy_is_d11_input": bool(mapping.customer_proxy_is_d11_input and mapping.events),
         "unmapped_types": dict(unmapped.most_common(20)),
         "by_day": {k: dict(v) for k, v in sorted(by_day.items())},
     }
@@ -318,7 +350,11 @@ def to_markdown(rep: dict[str, Any]) -> str:
     if "collateral" in rep:
         c = rep["collateral"]
         lines += [f"- Customers (an event within the window) flagged: {c['customer_otps_flagged']:,} of "
-                  f"{c['customer_otps']:,} ({(c['rate'] or 0):.2%})", ""]
+                  f"{c['customer_otps']:,} ({(c['rate'] or 0):.2%})"]
+        if rep.get("customer_proxy_is_d11_input"):
+            lines.append("  (note: the customer proxy is the same event type D11 reads; set "
+                         "`customer_events` in the mapping to separate them)")
+        lines.append("")
     if rep.get("incidents"):
         lines += ["## Labelled windows", "", "| id | label | requests | flagged | first flag (h) | excess stopped |",
                   "|---|---|---|---|---|---|"]
