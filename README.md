@@ -15,12 +15,12 @@ cheaply as addresses.
 ## Install
 
 ```bash
-pip install git+https://github.com/mtanzil6/otpguard.git                    # core, in-memory store
-pip install "otpguard[redis,sql] @ git+https://github.com/mtanzil6/otpguard.git"  # shared state in Redis, audit trail in SQL
-pip install "otpguard[server] @ git+https://github.com/mtanzil6/otpguard.git"     # HTTP service
+pip install otpguard                    # core, in-memory store
+pip install "otpguard[redis,sql]"       # shared state in Redis, audit trail in SQL
+pip install "otpguard[server]"          # HTTP service
 ```
 
-Not yet on PyPI — install straight from GitHub. Python 3.10+.
+Python 3.10+.
 
 ## Use
 
