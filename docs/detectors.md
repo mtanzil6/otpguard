@@ -1,6 +1,6 @@
 # Detector reference (v0.1.0)
 
-Defaults are those in `src/otpsentinel/policy.py`; every value can be set per detector
+Defaults are those in `src/otpguard/policy.py`; every value can be set per detector
 in the policy file, and weights per purpose. This page is the source for the
 manuscript's Tables 3 and 4; keep the three in step.
 

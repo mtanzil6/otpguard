@@ -16,7 +16,7 @@ from .scoring import combine
 from .store.base import Store, StoreError, hour
 from .store.memory import MemoryStore
 
-log = logging.getLogger("otpsentinel")
+log = logging.getLogger("otpguard")
 
 SEEN_TTL = 90 * 86400
 REQ_TTL = 2 * 3600

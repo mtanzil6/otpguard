@@ -16,8 +16,8 @@ import statistics
 import time
 from pathlib import Path
 
-from otpsentinel import OtpRequest, Policy, Sentinel
-from otpsentinel.store.memory import MemoryStore
+from otpguard import OtpRequest, Policy, Sentinel
+from otpguard.store.memory import MemoryStore
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     print("memory", out["backends"]["memory"], flush=True)
     if a.redis:
         import redis
-        from otpsentinel.store.redis_store import RedisStore
+        from otpguard.store.redis_store import RedisStore
         client = redis.Redis.from_url(a.redis)
         client.flushdb()
         out["backends"]["redis"] = bench(RedisStore(client=client, prefix="bench:"), a.n, policy)

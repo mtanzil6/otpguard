@@ -1,4 +1,4 @@
-"""Audit trail in a SQL database (PostgreSQL, MySQL or SQLite). Needs ``otpsentinel[sql]``."""
+"""Audit trail in a SQL database (PostgreSQL, MySQL or SQLite). Needs ``otpguard[sql]``."""
 from __future__ import annotations
 
 import json
@@ -145,7 +145,7 @@ class SqlAudit:
 
     def prune(self, retention_days: int = 90, now: float | None = None) -> dict[str, int]:
         """Delete decisions and closed alerts older than ``retention_days``. Run it from
-        cron (``otpsentinel prune --sql URL --days 90``); large installations may prefer
+        cron (``otpguard prune --sql URL --days 90``); large installations may prefer
         to partition ``otp_events`` by day in the database and drop partitions instead."""
         cutoff = _dt((now if now is not None else time.time()) - retention_days * 86400)
         with self.engine.begin() as c:

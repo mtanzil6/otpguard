@@ -1,4 +1,4 @@
-# Synthetic address mix for `otpsentinel simulate assign-ips`: share of customers per
+# Synthetic address mix for `otpguard simulate assign-ips`: share of customers per
 # carrier and how many /24 networks each gets. Stated, not measured.
 - {asn: stc,    share: 0.45, networks: 600}
 - {asn: mobily, share: 0.30, networks: 400}

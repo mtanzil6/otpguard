@@ -1,8 +1,8 @@
-# otpsentinel
+# otpguard
 
 Decide whether an OTP SMS should go out before you pay for it.
 
-`otpsentinel` sits between your app and your SMS provider. You call `check()` before
+`otpguard` sits between your app and your SMS provider. You call `check()` before
 sending a one-time password; it answers **allow**, **challenge** or **block**, with the
 reasons. It is aimed at SMS pumping (artificially inflated traffic), SMS bombing and
 account enumeration through the password-reset flow.
@@ -15,9 +15,9 @@ cheaply as addresses.
 ## Install
 
 ```bash
-pip install otpsentinel                    # core, in-memory store
-pip install "otpsentinel[redis,sql]"       # shared state in Redis, audit trail in SQL
-pip install "otpsentinel[server]"          # HTTP service
+pip install otpguard                    # core, in-memory store
+pip install "otpguard[redis,sql]"       # shared state in Redis, audit trail in SQL
+pip install "otpguard[server]"          # HTTP service
 ```
 
 Python 3.10+.
@@ -25,7 +25,7 @@ Python 3.10+.
 ## Use
 
 ```python
-from otpsentinel import OtpRequest, Sentinel
+from otpguard import OtpRequest, Sentinel
 
 guard = Sentinel.from_config("policy.yaml",
                              redis_url="redis://localhost:6379/0",
@@ -56,7 +56,7 @@ For asyncio apps, `AsyncSentinel.from_config(...)` has the same methods as corou
 ### HTTP
 
 ```bash
-otpsentinel serve --policy policy.yaml --redis redis://localhost:6379/0 --port 8080
+otpguard serve --policy policy.yaml --redis redis://localhost:6379/0 --port 8080
 ```
 
 ```
@@ -101,11 +101,11 @@ D8–D10 only run when you pass an IP or session data. Nothing breaks without th
   checked and taken in one Lua script, so concurrent requests on different servers
   cannot pass a cap together; the other detectors read counters with plain MGETs.
 - **SQL** (anything SQLAlchemy supports) for the audit trail: one row per decision,
-  outcomes, policy versions and grouped alerts. `otpsentinel prune --sql URL --days 90`
+  outcomes, policy versions and grouped alerts. `otpguard prune --sql URL --days 90`
   deletes old rows (run it from cron).
 - **Memory** for tests, replay and single-process setups.
 
-Phone numbers are stored only as an HMAC under your secret (`OTPSENTINEL_SECRET`);
+Phone numbers are stored only as an HMAC under your secret (`OTPGUARD_SECRET`);
 only the country code and a short prefix are kept in clear. IPs are kept as their
 network.
 
@@ -118,7 +118,7 @@ Most teams already have an SMS log with a timestamp, a number and a message type
 That is enough to see what a policy would have done:
 
 ```bash
-otpsentinel replay sms_log.csv --mapping mapping.yaml --policy policy.yaml \
+otpguard replay sms_log.csv --mapping mapping.yaml --policy policy.yaml \
     --incidents incidents.yaml --out report/
 ```
 
@@ -136,18 +136,18 @@ and, for windows you label in the incidents file, how quickly and how much was c
 ## Simulate attacks
 
 ```bash
-otpsentinel simulate baseline --days 28 --out base.csv
-otpsentinel simulate inject --base base.csv --scenario A2 --start 2026-01-26T10:00 --out mixed.csv
-otpsentinel replay mixed.csv --mapping examples/mapping-synthetic.yaml --policy examples/policy.yaml
+otpguard simulate baseline --days 28 --out base.csv
+otpguard simulate inject --base base.csv --scenario A2 --start 2026-01-26T10:00 --out mixed.csv
+otpguard replay mixed.csv --mapping examples/mapping-synthetic.yaml --policy examples/policy.yaml
 ```
 
 To inject attacks into your own log instead of synthetic traffic:
 
 ```bash
-otpsentinel simulate import sms_log.csv --mapping mapping.yaml --out base.csv   # also writes base.mapping.yaml
-otpsentinel simulate assign-ips --base base.csv --mix examples/asn-mix.yaml --out base_ip.csv   # optional, for A2/D8/D9
-otpsentinel simulate inject --base base_ip.csv --scenario A2 --start 2022-05-10T10:00 --volume 0.05 --out mixed.csv
-otpsentinel replay mixed.csv --mapping base.mapping.yaml --policy policy.yaml
+otpguard simulate import sms_log.csv --mapping mapping.yaml --out base.csv   # also writes base.mapping.yaml
+otpguard simulate assign-ips --base base.csv --mix examples/asn-mix.yaml --out base_ip.csv   # optional, for A2/D8/D9
+otpguard simulate inject --base base_ip.csv --scenario A2 --start 2022-05-10T10:00 --volume 0.05 --out mixed.csv
+otpguard replay mixed.csv --mapping base.mapping.yaml --policy policy.yaml
 ```
 
 `--volume` sets the attack rate as a fraction of the log's average OTP rate.

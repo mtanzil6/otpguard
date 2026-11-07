@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use otpsentinel, please cite it as below."
-title: "otpsentinel: a provider-independent Python library for detecting and limiting OTP SMS abuse"
+message: "If you use otpguard, please cite it as below."
+title: "otpguard: a provider-independent Python library for detecting and limiting OTP SMS abuse"
 type: software
 authors:
   - family-names: Tanzil
@@ -8,6 +8,6 @@ authors:
     email: mtanzil666@gmail.com
 version: 0.1.0
 license: MIT
-repository-code: "https://github.com/mtanzil6/otpsentinel"
+repository-code: "https://github.com/mtanzil6/otpguard"
 keywords: [otp, sms pumping, artificially inflated traffic, fraud detection, rate limiting]
 # doi: 10.5281/zenodo.XXXXXXX   # add after the Zenodo release

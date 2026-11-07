@@ -8,11 +8,11 @@ import threading
 
 import pytest
 
-from otpsentinel import Action, OtpRequest, Policy, Sentinel
-from otpsentinel.baselines import Baselines, hour_of_week
-from otpsentinel.store.base import hour
-from otpsentinel.store.memory import MemoryStore
-from otpsentinel.store.redis_store import RedisStore
+from otpguard import Action, OtpRequest, Policy, Sentinel
+from otpguard.baselines import Baselines, hour_of_week
+from otpguard.store.base import hour
+from otpguard.store.memory import MemoryStore
+from otpguard.store.redis_store import RedisStore
 
 T0 = 1_767_600_000.0  # a Monday, 08:00 UTC
 WEEK = 7 * 86400
@@ -167,7 +167,7 @@ def stores():
         pass
     try:
         import redis
-        url = os.environ.get("OTPSENTINEL_TEST_REDIS")    # e.g. redis://localhost:6379/15
+        url = os.environ.get("OTPGUARD_TEST_REDIS")    # e.g. redis://localhost:6379/15
         if not url:
             raise RuntimeError("no real Redis configured")
         c = redis.Redis.from_url(url, socket_connect_timeout=0.2)

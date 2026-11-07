@@ -120,10 +120,10 @@ class Policy:
         return self.mode == "enforce"
 
     def secret_bytes(self) -> bytes:
-        s = self.secret or os.environ.get("OTPSENTINEL_SECRET", "")
+        s = self.secret or os.environ.get("OTPGUARD_SECRET", "")
         if not s:
             # fine for tests and replay; production should always set a secret
-            s = "otpsentinel-dev-secret"
+            s = "otpguard-dev-secret"
         return s.encode()
 
     # loading ------------------------------------------------------------------------

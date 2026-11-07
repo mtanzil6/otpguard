@@ -1,4 +1,4 @@
-# Maps the files written by `otpsentinel simulate` for replay.
+# Maps the files written by `otpguard simulate` for replay.
 columns: {timestamp: timestamp, phone: phone, type: type, ip: ip, label: label}
 otp:
   "otp:login": login

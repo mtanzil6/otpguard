@@ -2,7 +2,7 @@
 # then switch to enforce.
 version: example-2026-11
 mode: shadow
-secret: env:OTPSENTINEL_SECRET     # HMAC key for phone numbers; never commit the real one
+secret: env:OTPGUARD_SECRET     # HMAC key for phone numbers; never commit the real one
 default_region: SA
 home_countries: [SA]
 timezone: Asia/Riyadh              # campaign dates below are in this zone

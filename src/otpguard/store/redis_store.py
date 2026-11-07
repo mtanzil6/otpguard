@@ -49,12 +49,12 @@ return out
 
 
 class RedisStore:
-    """Redis backend, shared by every app server. Needs ``pip install otpsentinel[redis]``."""
+    """Redis backend, shared by every app server. Needs ``pip install otpguard[redis]``."""
 
     def __init__(self, client: Any = None, url: str | None = None, prefix: str = "otps:"):
         if client is None:
             if redis is None:
-                raise ImportError("RedisStore needs the redis package: pip install otpsentinel[redis]")
+                raise ImportError("RedisStore needs the redis package: pip install otpguard[redis]")
             client = redis.Redis.from_url(url or "redis://localhost:6379/0",
                                           socket_timeout=0.25, socket_connect_timeout=0.25)
         self.r = client

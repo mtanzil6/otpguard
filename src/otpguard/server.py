@@ -1,6 +1,6 @@
-"""HTTP service for apps that aren't written in Python. Needs ``otpsentinel[server]``.
+"""HTTP service for apps that aren't written in Python. Needs ``otpguard[server]``.
 
-    OTPSENTINEL_POLICY=policy.yaml OTPSENTINEL_REDIS=redis://localhost:6379/0 otpsentinel serve
+    OTPGUARD_POLICY=policy.yaml OTPGUARD_REDIS=redis://localhost:6379/0 otpguard serve
 """
 from __future__ import annotations
 
@@ -46,14 +46,14 @@ class EventBody(BaseModel):
 
 def create_app(sentinel: Sentinel | None = None, show_reasons: bool = False) -> FastAPI:
     if sentinel is None:
-        path = os.environ.get("OTPSENTINEL_POLICY")
+        path = os.environ.get("OTPGUARD_POLICY")
         if path:
-            sentinel = Sentinel.from_config(path, redis_url=os.environ.get("OTPSENTINEL_REDIS"),
-                                            sql_url=os.environ.get("OTPSENTINEL_SQL"),
-                                            asn_tsv=os.environ.get("OTPSENTINEL_ASN_TSV"))
+            sentinel = Sentinel.from_config(path, redis_url=os.environ.get("OTPGUARD_REDIS"),
+                                            sql_url=os.environ.get("OTPGUARD_SQL"),
+                                            asn_tsv=os.environ.get("OTPGUARD_ASN_TSV"))
         else:
             sentinel = Sentinel(Policy())
-    app = FastAPI(title="otpsentinel", version="0.1.0")
+    app = FastAPI(title="otpguard", version="0.1.0")
     app.state.sentinel = sentinel
 
     @app.get("/health")

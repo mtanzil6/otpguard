@@ -6,7 +6,7 @@ attack volumes, against the full policy, a conventional limiter and layer ablati
     python benchmarks/run_scenarios.py --base real_log.csv --mapping mapping.yaml   # a real log
 
 Writes scenarios.json and scenarios.md (mean and 95 % interval over seeds). With no
---base the legitimate traffic is synthetic; use `otpsentinel replay` on your own logs
+--base the legitimate traffic is synthetic; use `otpguard replay` on your own logs
 for numbers that mean something for your service."""
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from otpsentinel import simulate as sim
-from otpsentinel.policy import Policy, _ts
-from otpsentinel.replay import Mapping, replay
+from otpguard import simulate as sim
+from otpguard.policy import Policy, _ts
+from otpguard.replay import Mapping, replay
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent

@@ -6,7 +6,7 @@
 - Weighted noisy-OR scoring with hard rules and per-purpose / per-country policy
 - Memory and Redis stores; SQL audit trail with grouped alerts
 - Shadow mode, fail-open / fail-closed
-- HTTP service (`otpsentinel serve`) and `AsyncSentinel` for asyncio apps
+- HTTP service (`otpguard serve`) and `AsyncSentinel` for asyncio apps
 - Log replay (CSV or JSON Lines, gzipped or not) with labelled windows and customer collateral
 - Synthetic traffic and attack scenarios A1–A7; import of real logs for injection
 
@@ -29,8 +29,8 @@
 - `report_event(..., phone=)` is used; the HTTP `/v1/event` accepts `phone`.
 - Store sets replace JSON lists for the per-hour "active keys" (O(1) per add on Redis).
 - `MemoryStore`: values set before the first counter write no longer expire at once.
-- `otpsentinel prune` deletes audit rows past the retention period.
-- `otpsentinel simulate import` / `assign-ips` and `inject --volume` for injecting
+- `otpguard prune` deletes audit rows past the retention period.
+- `otpguard simulate import` / `assign-ips` and `inject --volume` for injecting
   attacks into a real log; `benchmarks/run_scenarios.py` runs several seeds, attack
   volumes, a limiter baseline and layer ablations; `benchmarks/latency.py`.
 - Tests for D4, D5, D6, D7, D9, D11, D12, baselines, reservations under concurrency

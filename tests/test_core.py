@@ -1,10 +1,10 @@
 import pytest
 
-from otpsentinel import Action, OtpRequest, Policy, Sentinel, Signal
-from otpsentinel.enrich import NetworkParser, PhoneParser, normalize_phone
-from otpsentinel.scoring import combine
-from otpsentinel.store.base import StoreError
-from otpsentinel.store.memory import MemoryStore
+from otpguard import Action, OtpRequest, Policy, Sentinel, Signal
+from otpguard.enrich import NetworkParser, PhoneParser, normalize_phone
+from otpguard.scoring import combine
+from otpguard.store.base import StoreError
+from otpguard.store.memory import MemoryStore
 
 T0 = 1_767_600_000.0  # a Monday, 08:00 UTC
 

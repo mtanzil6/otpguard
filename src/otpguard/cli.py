@@ -105,8 +105,8 @@ def cmd_serve(a) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="otpsentinel")
-    ap.add_argument("--version", action="version", version=f"otpsentinel {__version__}")
+    ap = argparse.ArgumentParser(prog="otpguard")
+    ap.add_argument("--version", action="version", version=f"otpguard {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     c = sub.add_parser("check", help="run one request through a policy")

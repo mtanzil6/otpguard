@@ -1,4 +1,4 @@
-"""otpsentinel: decide whether an OTP SMS should be sent, before you pay for it."""
+"""otpguard: decide whether an OTP SMS should be sent, before you pay for it."""
 from .model import Action, Decision, OtpRequest, Signal
 from .policy import Policy
 from .sentinel import AsyncSentinel, Sentinel

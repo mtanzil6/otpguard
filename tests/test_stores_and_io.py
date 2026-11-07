@@ -1,10 +1,10 @@
 import pytest
 
-from otpsentinel import OtpRequest, Policy, Sentinel
-from otpsentinel import simulate as sim
-from otpsentinel.policy import _ts
-from otpsentinel.replay import Mapping, replay
-from otpsentinel.store.memory import MemoryStore
+from otpguard import OtpRequest, Policy, Sentinel
+from otpguard import simulate as sim
+from otpguard.policy import _ts
+from otpguard.replay import Mapping, replay
+from otpguard.store.memory import MemoryStore
 
 T0 = 1_767_600_000.0
 
@@ -14,7 +14,7 @@ def stores():
     try:
         import fakeredis
 
-        from otpsentinel.store.redis_store import RedisStore
+        from otpguard.store.redis_store import RedisStore
         out.append(RedisStore(client=fakeredis.FakeRedis()))
     except ImportError:
         pass
@@ -45,7 +45,7 @@ def test_sql_audit_records_and_alerts():
     pytest.importorskip("sqlalchemy")
     from sqlalchemy import func, select
 
-    from otpsentinel.sql import SqlAudit, alerts, otp_events
+    from otpguard.sql import SqlAudit, alerts, otp_events
     audit = SqlAudit("sqlite://")
     g = Sentinel(Policy.from_dict({"mode": "enforce", "countries": {"OM": {"deny": True}}}),
                  audit=audit)
@@ -66,7 +66,7 @@ def test_http_service():
     pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
 
-    from otpsentinel.server import create_app
+    from otpguard.server import create_app
     app = create_app(Sentinel(Policy.from_dict({"mode": "enforce", "countries": {"OM": {"deny": True}}})))
     c = TestClient(app)
     assert c.get("/health").json()["ok"] is True
@@ -108,9 +108,9 @@ def test_import_real_log_inject_and_replay(tmp_path):
     import csv
     from datetime import datetime, timedelta, timezone
 
-    from otpsentinel import simulate as sim
-    from otpsentinel.policy import Policy
-    from otpsentinel.replay import Mapping, replay
+    from otpguard import simulate as sim
+    from otpguard.policy import Policy
+    from otpguard.replay import Mapping, replay
 
     raw = tmp_path / "raw.csv"
     t = datetime(2022, 6, 1, 0, 0, 0)

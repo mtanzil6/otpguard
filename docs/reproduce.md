@@ -9,7 +9,7 @@ your own log they produce the same tables for your service. Edit
 
 ```bash
 # full policy
-otpsentinel replay sms_log.csv --mapping examples/mapping-case-study.yaml \
+otpguard replay sms_log.csv --mapping examples/mapping-case-study.yaml \
     --policy examples/policy.yaml --incidents examples/incidents-case-study.yaml \
     --out results/replay-full --progress 200000
 
@@ -29,8 +29,8 @@ limiter reduces to its per-number caps there; say so in the table note.
 ## Table 8: simulated attacks injected into the log
 
 ```bash
-otpsentinel simulate import sms_log.csv --mapping examples/mapping-case-study.yaml --out base.csv
-otpsentinel simulate assign-ips --base base.csv --mix examples/asn-mix.yaml --out base_ip.csv
+otpguard simulate import sms_log.csv --mapping examples/mapping-case-study.yaml --out base.csv
+otpguard simulate assign-ips --base base.csv --mix examples/asn-mix.yaml --out base_ip.csv
 python benchmarks/run_scenarios.py --base base_ip.csv --mapping base.mapping.yaml \
     --attack-at 2022-05-10T10:00 --seeds 10 --volumes 0.01 0.05 0.1 0.2 \
     --designs full limiter --out results/simulation
